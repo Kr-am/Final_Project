@@ -1,0 +1,201 @@
+MEMBER 2 - TRANSACTION ENGINE, VALIDATION, AND TECHNICAL DESIGN
+Project: Banking Transaction Processing and Fraud Detection Simulator
+Time budget: One-day group sprint (~12 active hours)
+Target: Intel 8086, 16-bit DOS, TASM 4.1 / GUI Turbo Assembler 5.1
+
+YOUR MISSION
+Implement reliable withdrawals and transfers, enforce limits, prevent
+invalid balance updates, and document system design and core technical logic.
+Most importantly, transfers must be ALL-OR-NOTHING: validate first, commit
+both balances only when every condition passes.
+
+READ FIRST
+- README.md and ROADMAP.md
+- docs/INTEGRATION_CONTRACT.md
+- Instructor's Problem #2 instructions and documentation rubric
+- Member 1's shared variable names BEFORE typing any code
+
+FILES YOU OWN
+- src/TRANSACTIONS.INC (procedures only; no .MODEL, MAIN, or END MAIN)
+- docs/chapter2-draft.txt or team-approved equivalent
+- docs/chapter3-technical-notes.txt
+- docs/flowchart-pseudocode.txt (or diagrams in final documentation)
+Do not redefine account arrays; they already live in MAIN.ASM.
+
+WORK PACKAGE A - SIGN OFF ON INTERFACE (HOUR 0-1)
+[ ] Verify these agreed values in INTEGRATION_CONTRACT.md:
+    deposit/withdraw/transfer max = 30,000 centavos, per-account daily
+    cash withdrawal max = 60,000 centavos; amounts stored as unsigned words.
+[ ] Confirm Member 1's CurrentIndex, TargetIndex, RequestedAmount,
+    AccountIDs, Balances, DailyWithdrawn, Txn* fields and lookup globals.
+[ ] Confirm exact TASM-compatible procedure names: DoWithdrawal, DoTransfer.
+[ ] Confirm error codes and what a rejected operation should log.
+[ ] Confirm outgoing transfers are not cash withdrawals and do not count
+    against the daily cash-withdrawal cap (team design choice).
+[ ] Share a short pseudocode outline with Members 1 and 3 before coding.
+
+WORK PACKAGE B - WITHDRAWAL PROCEDURE (HOUR 1-3)
+Implement DoWithdrawal as a NEAR procedure:
+[ ] Verify a valid logged-in account index (0..9).
+[ ] Read RequestedAmount from Member 1's numeric helper or common input.
+[ ] Reject zero, text that failed parsing, >30,000 centavos.
+[ ] Load Balances[CurrentIndex] using 2*index byte offset.
+[ ] Reject amount > current balance (insufficient funds).
+[ ] Load DailyWithdrawn[CurrentIndex]. Reject withdrawal when
+    currentDaily > 60,000 - amount; this avoids overflow too.
+[ ] ONLY after all checks pass:
+        Balances[index] = oldBalance - amount
+        DailyWithdrawn[index] = oldDaily + amount
+[ ] Set TxnType='W', TxnSourceID=account ID, TxnDestID=0,
+    TxnAmount (or RequestedAmount), TxnResultBalance=new balance,
+    TxnStatus=1 and TxnError=0.
+[ ] Call AppendTransaction once on success, followed by
+    UpdateFraudAfterSuccess once.
+[ ] On rejection do NOT change balance/daily withdrawn/fraud streak;
+    set TxnStatus=0, correct TxnError, resulting balance=unchanged,
+    increment RejectedCount once, call AppendTransaction once.
+[ ] Print clear errors: invalid amount, insufficient funds, daily cap.
+[ ] Check boundary cases: amount=1, amount=30,000, exact daily cap,
+    amount=0, and 1 centavo over allowed remaining daily cap.
+
+WITHDRAWAL PSEUDOCODE
+  INPUT amount
+  PREPARE transaction context
+  IF amount invalid OR amount > MAX_AMOUNT: REJECT
+  IF balance < amount: REJECT
+  IF dailyWithdrawn > DAILY_LIMIT - amount: REJECT
+  newBalance = balance - amount
+  newDaily = dailyWithdrawn + amount
+  COMMIT both values
+  set accepted transaction status, log, update fraud state, show success
+  EXIT
+  REJECT: preserve original values, count and log rejection, show reason
+
+WORK PACKAGE C - TWO-PHASE TRANSFER PROCEDURE (HOUR 2-4)
+Implement DoTransfer for source = logged-in account, destination = entered ID.
+PHASE 1 - VALIDATE ONLY (no balance updates):
+[ ] Confirm source logged in and destination exists via FindAccount.
+[ ] Verify source index and destination index are different.
+[ ] Reject amount that is zero/invalid/>30,000 centavos.
+[ ] Check source balance >= amount.
+[ ] Check destination balance <= 65,535 - amount.
+[ ] Check operation limits (maximum per transfer; daily cash-withdrawal
+    cap does not apply to outgoing transfers under proposed rules).
+[ ] Populate TxnType='T', TxnSourceID, TxnDestID, TxnAmount, status/error
+    in a consistent way, including destination ID on failed lookups.
+
+PHASE 2 - COMMIT (only after all validations succeed):
+[ ] Compute newSource = sourceBalance - amount.
+[ ] Compute newDest = destBalance + amount.
+[ ] Store newSource and newDest; no early partial writes.
+[ ] Set TxnResultBalance to newSource (source after the transfer),
+    TxnStatus=1, TxnError=0.
+[ ] Call AppendTransaction exactly once.
+[ ] Call UpdateFraudAfterSuccess to reset streak on BOTH affected accounts.
+[ ] Print success with source/destination IDs and results.
+
+REJECTION PATH:
+[ ] NEVER modify EITHER account's balance on a failed transfer.
+[ ] Do not change daily counters or fraud streaks on failed transfers.
+[ ] Increment RejectedCount exactly once.
+[ ] Set TxnStatus=0; record error and unchanged source balance;
+    log the attempt exactly once if the session account is known.
+[ ] Display reason: invalid destination, same account, insufficient
+    funds, transfer limit, or destination balance overflow.
+
+TRANSFER PSEUDOCODE
+  INPUT destination ID, amount
+  PREPARE transaction context
+  IF source/destination invalid OR equal: REJECT
+  IF amount invalid OR amount > MAX_AMOUNT: REJECT
+  IF sourceBalance < amount: REJECT
+  IF destBalance > 65535 - amount: REJECT
+  newSource = sourceBalance - amount
+  newDest = destBalance + amount
+  // Only here are the two balances changed
+  sourceBalance = newSource
+  destBalance = newDest
+  log success, reset both fraud streaks, show result
+  EXIT
+  REJECT: log failure and show reason; both balances unchanged
+
+IMPORTANT: DO NOT implement a transfer as a call to DoWithdrawal followed
+by DoDeposit. That can deduct the source account before destination checks,
+create inconsistent balances, affect daily withdrawal totals incorrectly,
+and produce two logs for what should be one transfer.
+
+WORK PACKAGE D - ASSEMBLY SAFETY AND UNIT CHECKS (HOUR 3-5)
+[ ] Use unsigned comparisons appropriately (JA/JB/JAE/JBE as needed).
+[ ] Do not use signed-only conditional logic for unsigned balances.
+[ ] When indexing DW arrays, multiply an index by 2. For DB, no scaling.
+[ ] Preserve BX, CX, DX, SI, DI, BP when used; AX/flags are volatile.
+[ ] Do not rely on flags from BEFORE a CALL; conditional jumps must
+    follow a CMP or other valid flag-setting instruction.
+[ ] Avoid memory-to-memory MOV; load through AX or another register.
+[ ] Do not declare global variables in your .INC; request any needed
+    globals from Member 1 and update the contract first.
+[ ] Ask Member 1 to compile your module integrated before Hour 5.
+
+WORK PACKAGE E - DOCUMENTATION (IN PARALLEL; COMPLETE HOUR 8-10)
+CHAPTER 2 - SYSTEM ANALYSIS AND DESIGN
+[ ] 2.1 System Overview: Input -> validation -> balance changes -> log ->
+    detection -> display. Explain login and menu loop.
+[ ] 2.2 System Requirements: software (TASM 4.1, GUI Turbo Assembler,
+    DOS environment and linker); hardware (PC). Mark no external banking
+    hardware/sensors, because this is purely a software simulation.
+[ ] 2.3 System Architecture diagram: menu/login, account storage,
+    transaction engine, logging/fraud modules, output.
+[ ] 2.4 System Flowchart: login, operation choice, validation decision,
+    commit/reject, log, alert, menu loop.
+[ ] 2.5 Algorithm/Pseudocode: separately document deposit, withdrawal,
+    two-phase transfer, fraud check, and ring-buffer insert.
+[ ] 2.6 Data Structure and Memory Organization: DW account arrays,
+    DB flags, 50-record log arrays, index scaling, buffers and counters.
+
+CHAPTER 3 - TECHNICAL COORDINATOR
+[ ] 3.3 Register Utilization: AX arithmetic / values, BX or SI indexing,
+    CX loop counts, DX DOS output/remainder, other registers actually used.
+[ ] 3.4 Assembly Instructions Used: list only instructions that occur
+    in the final actual code, with accurate purpose and usage examples.
+[ ] 3.5 Procedures/Subroutines: describe ALL modules, not only yours;
+    get procedure descriptions from Members 1 and 3.
+[ ] 3.6 Source Code: explain critical code segments; coordinate with
+    Member 1 to put the final full commented source into the appendix
+    and source-code section according to teacher's instructions.
+[ ] Verify documentation reflects actual program behavior and exact
+    validation rules, not features that were planned but not completed.
+
+YOUR TEST CASE OWNERSHIP (MEMBER 3 COLLECTS EVIDENCE)
+T05 Valid withdrawal: balance 50,000, withdraw 1,000 -> balance 49,000;
+    daily withdrawn increases by 1,000; accepted log created.
+T06 Insufficient funds: attempt amount > current balance, but <=30,000
+    (first reduce a test account balance below 30,000). No state change.
+T07 Daily cap: withdraw repeatedly until daily total=60,000 (replenish
+    balance with valid deposits/transfers when needed); next 1-centavo
+    withdrawal is rejected even if balance is positive.
+T08 Valid transfer: source has >= amount, destination has capacity.
+    Both change by exactly opposite amounts and one success log is made.
+For the daily-cap test, do not assume a 50,000 starting balance can be
+withdrawn by 60,000 without first replenishing it.
+Record setup steps and actual before/after account balances.
+
+YOUR GITHUB WORKFLOW
+[ ] Work on branch feature/member2-transactions.
+[ ] Commit withdraw procedure separately from two-phase transfer.
+[ ] Keep source in src/TRANSACTIONS.INC without duplicate program setup.
+[ ] Submit file / open PR early enough for integration in Hour 4-6.
+[ ] Post a quick interface summary: procedure names, data read/written,
+    possible errors, and register-preservation checks.
+[ ] Deliver Chapter 2, Chapter 3 technical notes, and flowcharts.
+
+DEFINITION OF DONE / HANDOFF
+[ ] Withdrawal accepts valid amounts and enforces funds + daily cap.
+[ ] Transfer is two-phase, atomic at the program logic level.
+[ ] Rejected operations leave balances/counters unchanged and get logged.
+[ ] Procedures compile with Member 1's MAIN.ASM under TASM 4.1.
+[ ] Chapter 2 and technical notes are complete and evidence-based.
+[ ] You can demonstrate a successful transfer AND a failed transfer
+    without inconsistent or partially updated balances.
+
+DEMONSTRATION: Show withdrawal, daily cap rejection, successful transfer,
+failed transfer unchanged balances; explain two-phase validation.
