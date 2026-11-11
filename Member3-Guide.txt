@@ -1,0 +1,207 @@
+MEMBER 3 - FRAUD DETECTION, LOGGING, TESTING, AND FINAL REPORT
+Project: Banking Transaction Processing and Fraud Detection Simulator
+Time budget: One-day group sprint (~12 active hours)
+Target: Intel 8086, 16-bit DOS, TASM 4.1 / GUI Turbo Assembler 5.1
+
+YOUR MISSION
+Implement the transaction log and suspicious-withdrawal detector; produce
+account summaries and rejected-count displays. Lead test evidence collection,
+write the testing/results and conclusion chapters, and organize appendices.
+Your job is not just screenshots: you own working Assembly procedures.
+
+READ FIRST
+- README.md and ROADMAP.md
+- docs/INTEGRATION_CONTRACT.md (especially logging and fraud policy)
+- Instructor's Problem #2 and CSO documentation rubric
+- Member 1's common variable definitions and Member 2's call requirements
+
+FILES YOU OWN
+- src/SECURITY.INC (procedures only; no .MODEL, MAIN, or END MAIN)
+- docs/chapter4-tests.txt and completed test table
+- docs/chapter5-conclusion.txt
+- submission/evidence/ (screenshots with meaningful names)
+- Appendix E (additional screenshots), Appendix F (test results),
+  Appendix H (individual contribution report); coordinate all appendices.
+
+WORK PACKAGE A - CONFIRM LOGGING CONTRACT (HOUR 0-1)
+[ ] Verify all transaction globals with Member 1: TxnType, TxnSourceID,
+    TxnDestID, RequestedAmount, TxnResultBalance, TxnStatus, TxnError.
+[ ] Agree that 'D'=deposit, 'W'=withdrawal, 'T'=transfer; status
+    1=accepted, 0=rejected; destination ID 0 for D/W.
+[ ] Confirm what happens when a user enters invalid text: reject the
+    attempted operation; log it only if a logged-in source account is known.
+[ ] Confirm balance in log means current account balance after successful
+    D/W, source balance after successful transfer, or unchanged source
+    balance after rejected attempt.
+[ ] Agree on append-once rule: each attempted D/W/T is logged once;
+    balance inquiries and login attempts are not monetary transactions.
+[ ] Agree 50-slot ring-buffer behavior and chronological display order.
+
+WORK PACKAGE B - 50-RECORD TRANSACTION HISTORY (HOUR 1-3)
+Implement AppendTransaction as a NEAR procedure:
+[ ] Use LogNext (0..49) for current record insertion slot.
+[ ] Store type, source account ID, destination ID, amount, resulting
+    source/current balance, status, and error code in parallel arrays.
+[ ] Ensure every DW log field uses slot*2 byte offset; DB fields slot.
+[ ] If LogCount<50, increase count; otherwise keep count exactly 50.
+[ ] After writing, increase LogNext and wrap from 49 back to 0.
+[ ] Do not read or write outside any of the 50-element arrays.
+[ ] Keep separate status for rejected attempts instead of treating an
+    invalid operation as successfully processed.
+[ ] Do not change bank balances during logging.
+
+Implement ShowHistory:
+[ ] Show header: #, type, source, target, amount, result balance,
+    accepted/rejected, error (when rejected).
+[ ] Display in chronological order: if LogCount<50 start at slot 0;
+    if LogCount=50 start at LogNext (the oldest slot).
+[ ] Show last up to 50 attempted operations; include a 'no history'
+    message when empty.
+[ ] Optional: filter records to current account if code time permits;
+    a program-wide history is acceptable if that is the agreed design.
+[ ] Use Member 1's shared number and money printing helpers.
+
+RING-BUFFER PSEUDOCODE
+  slot = LogNext
+  LogType[slot] = TxnType
+  LogSrc[slot] = TxnSourceID
+  LogDst[slot] = TxnDestID
+  LogAmount[slot] = RequestedAmount
+  LogBalance[slot] = TxnResultBalance
+  LogStatus[slot] = TxnStatus
+  LogError[slot] = TxnError
+  if LogCount < 50: LogCount++
+  LogNext = (LogNext + 1) modulo 50
+
+WORK PACKAGE C - SUSPICIOUS WITHDRAWAL DETECTION (HOUR 2-4)
+Implement UpdateFraudAfterSuccess. Only call it after a fully successful
+D/W/T; rejected attempts must not affect its counters.
+[ ] Maintain a FraudStreak byte for each of 10 accounts.
+[ ] For a successful withdrawal greater than 10,000 centavos, add 1
+    to the currently logged-in source account's streak.
+[ ] At exactly 10,000 centavos, treat as NOT above threshold; reset.
+[ ] For a successful withdrawal <=10,000, reset that account's streak.
+[ ] On successful deposit, reset receiving account's streak.
+[ ] On successful transfer, reset the streak for BOTH source and target.
+[ ] When streak changes from 2 to 3, set that account's FraudFlags=1,
+    increase FraudAlertCount, and print a clearly marked fraud warning.
+[ ] Streak 4 or greater should not repeatedly count the same alert.
+[ ] Ensure index refers to account position (0..9), not bank ID (1001+).
+[ ] Do not reject a valid withdrawal merely because it looks suspicious.
+[ ] Keep the flag visible in account summaries for the session.
+
+FRAUD PSEUDOCODE
+  IF TxnStatus != 1: RETURN
+  IF TxnType == 'W':
+     IF RequestedAmount > 10000:
+        streak[current account]++
+        IF streak just became 3:
+           flag[current account] = 1
+           FraudAlertCount++
+           print warning
+     ELSE streak[current account] = 0
+  ELSE IF TxnType == 'D': streak[current account] = 0
+  ELSE IF TxnType == 'T':
+     streak[source account] = 0
+     streak[destination account] = 0
+  RETURN
+
+If an account already has a flag, keeping its flag = 1 is intentional.
+The indicator means 'rule triggered during this session', not 'fraud proven'.
+
+WORK PACKAGE D - ACCOUNT SUMMARY AND REJECTION DISPLAY (HOUR 3-4)
+Implement ShowAccountSummaries:
+[ ] Print every simulation account's ID and current balance.
+[ ] Print each account's running daily withdrawal total and fraud flag.
+[ ] Print global RejectedCount and FraudAlertCount.
+[ ] Ensure values shown match arrays, not hard-coded initial balances.
+[ ] Verify source/destination balances after a transfer through summaries.
+[ ] Be able to point to where a rejection increments RejectedCount:
+    Members 1/2 own that increment in the failure path; your code
+    only displays the shared counter. Avoid counting the same failure twice.
+[ ] Do not introduce real banking security claims in the UI or docs.
+
+WORK PACKAGE E - TEST LEAD (HOUR 4-8)
+[ ] Make test case sheet with columns: No., starting state/setup,
+    input/condition, expected output, actual output, pass/fail,
+    evidence filename, responsible member.
+[ ] Collect T01-T04 from Member 1 and T05-T08 from Member 2.
+[ ] Personally perform the following:
+    T09 Failed transfer due to destination overflow: source 50,000,
+        target 60,000, amount 10,000 -> rejection; BOTH unchanged.
+        Set the target to 60,000 via permitted previous actions.
+    T10 Fraud: with available balance and within daily cap, perform
+        three successive successful withdrawals of 11,000 centavos
+        from one account (replenish first if necessary); exactly
+        on the third, a flag/alert appears.
+    T11 Log capacity: generate 51 attempts; last 50 records retained,
+        oldest overwritten, count remains 50, chronology correct.
+    T12 Summary + rejection counts: create known rejected transactions,
+        verify count increments exactly once per attempt.
+[ ] In fraud test, remember successful deposits and transfers RESET streak;
+    perform any required replenishment BEFORE the 3 high withdrawals.
+[ ] Record actual outcomes honestly. A failed test is 'FAILED' until fixed
+    and rerun; never fill Actual Output with expected output by assumption.
+[ ] Save screenshots of assembler success, program running, menus,
+    user input, accepted transactions, rejected transactions, fraud warning,
+    log, summary, and when available register/flags debugging.
+[ ] Use consistent filenames such as T09_FAILED_TRANSFER.png and
+    T10_FRAUD_ALERT.png; capture real screenshots, not mockups.
+[ ] Re-run all critical tests after integration changes.
+
+WORK PACKAGE F - DOCUMENTATION (HOUR 6-10)
+CHAPTER 3.7 - PROGRAM EXECUTION
+[ ] Write a short explanation for each important screenshot.
+[ ] Include actual compilation/linking, input/output, program run,
+    debugging state, register values and flags where available.
+
+CHAPTER 4 - TESTING AND RESULTS
+[ ] 4.1 Testing Procedures: repeatable test procedure + environment.
+[ ] 4.2 Test Cases: 12 real cases (teacher requires AT LEAST 10).
+[ ] 4.3 Testing Results and Analysis: explain passing/failing results,
+    balances, logs, fraud rules, and transfer consistency.
+[ ] 4.4 Errors and Troubleshooting: true issues encountered, causes,
+    what code was changed, and how you confirmed the fix.
+[ ] 4.5 Final Project Output: screenshots of finished simulator.
+
+CHAPTER 5 - CONCLUSION AND RECOMMENDATIONS
+[ ] 5.1 Conclusion: objectives achieved, constraints, Assembly lessons.
+[ ] 5.2 Recommendations: future time/date handling, persistent records,
+    bigger balances, stronger authorization; clearly mark future work.
+
+REFERENCES + APPENDICES
+[ ] Collect APA 7 references from all members. Cite only references
+    actually consulted; don't invent books, websites, or manuals.
+[ ] Appendix A: complete final Assembly source, verified from Member 1.
+[ ] Appendix B: supporting C/C++ only if used; otherwise mark N/A.
+[ ] Appendix C: flowcharts/pseudocode from Member 2.
+[ ] Appendix D: circuit diagram only if applicable; software-only -> N/A.
+[ ] Appendix E: extra execution/debugging screenshots.
+[ ] Appendix F: full test results and supporting evidence.
+[ ] Appendix G: actual project photographs, if applicable (for a software
+    project ask instructor whether real program screenshots are acceptable).
+[ ] Appendix H: individual contributions with actual files, functions,
+    test/documentation responsibilities, and concrete work evidence.
+[ ] Merge sections into final document with Member 1. Instructor's PDF
+    appears to number Chapter 4 subsections 5.x and Chapter 5 as 6.x;
+    use consistent 4.x/5.x unless instructor requires literal numbering.
+
+YOUR GITHUB WORKFLOW
+[ ] Work in branch feature/member3-security-qa.
+[ ] Commit logger before detection; then summary and tests separately.
+[ ] Open PR or hand off SECURITY.INC by Hour 4-5 for integration.
+[ ] Upload genuine evidence and the test results; never stage .OBJ/.EXE
+    unless the team explicitly chooses to ship a compiled executable.
+[ ] Help Member 1 test integrated functionality from a clean build.
+
+DEFINITION OF DONE / HANDOFF
+[ ] Log holds at most 50 records, including rejects, oldest overwritten.
+[ ] Log shows type, IDs, amount, resulting balance, status accurately.
+[ ] Fraud alert triggers at 3 accepted high withdrawals in sequence.
+[ ] Summary reflects real account balances and rejection counts.
+[ ] All 12 tests have actual results and evidence or truthful limitations.
+[ ] Chapter 4, Chapter 5, execution screenshots, appendices complete.
+[ ] Code compiles as part of the integrated single TASM program.
+
+DEMONSTRATION: Show history, three qualifying withdrawals triggering an
+alert, summaries and rejected counts, and test report evidence.
